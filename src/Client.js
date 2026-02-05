@@ -1,7 +1,13 @@
 'use strict';
 
 const EventEmitter = require('events');
-const puppeteer = require('puppeteer');
+// 尝试使用 puppeteer-core（Electron 环境），如果不存在则使用 puppeteer（标准环境）
+let puppeteer;
+try {
+    puppeteer = require('puppeteer-core');
+} catch (e) {
+    puppeteer = require('puppeteer');
+}
 const moduleRaid = require('@pedroslopez/moduleraid/moduleraid');
 
 const Util = require('./util/Util');
