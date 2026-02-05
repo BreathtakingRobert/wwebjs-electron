@@ -1,13 +1,7 @@
 'use strict';
 
 const EventEmitter = require('events');
-// 尝试使用 puppeteer-core（Electron 环境），如果不存在则使用 puppeteer（标准环境）
-let puppeteer;
-try {
-    puppeteer = require('puppeteer-core');
-} catch (e) {
-    puppeteer = require('puppeteer');
-}
+const puppeteer = require('puppeteer');
 const moduleRaid = require('@pedroslopez/moduleraid/moduleraid');
 
 const Util = require('./util/Util');
@@ -323,7 +317,10 @@ class Client extends EventEmitter {
         await this.authStrategy.beforeBrowserInitialized();
 
         const puppeteerOpts = this.options.puppeteer;
-        if (puppeteerOpts && (puppeteerOpts.browserWSEndpoint || puppeteerOpts.browserURL)) {
+        if (this.options.page) {
+            page = this.options.page;
+            browser = page.browser();
+        } else if (puppeteerOpts && (puppeteerOpts.browserWSEndpoint || puppeteerOpts.browserURL)) {
             browser = await puppeteer.connect(puppeteerOpts);
             page = await browser.newPage();
         } else {
@@ -2002,7 +1999,7 @@ class Client extends EventEmitter {
      * @returns {Promise<boolean>} Returns true if the operation completed successfully, false otherwise
      */
     async deleteChannel(channelId) {
-        return await this.pupPage.evaluate(async (channelId) => {
+        return await this.client.pupPage.evaluate(async (channelId) => {
             const channel = await window.WWebJS.getChat(channelId, { getAsModel: false });
             if (!channel) return false;
             try {
