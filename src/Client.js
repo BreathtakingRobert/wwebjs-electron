@@ -356,15 +356,34 @@ class Client extends EventEmitter {
         // ocVersion (isOfficialClient patch)
         // remove after 2.3000.x hard release
         await page.evaluateOnNewDocument(() => {
-            const originalError = Error;
-            window.originalError = originalError;
+            const OriginalError = Error;
+            window.originalError = OriginalError;
+
+            function PatchedError(message) {
+                const err = new OriginalError(message);
+                try {
+                    const stack = (err && typeof err.stack === 'string') ? err.stack : '';
+                    if (stack && stack.includes('moduleRaid')) {
+                        err.stack = stack + '\n    at https://web.whatsapp.com/vendors~lazy_loaded_low_priority_components.05e98054dbd60f980427.js:2:44';
+                    }
+                } catch (_) {}
+                return err;
+            }
+
+            // Preserve instanceof checks and static properties (captureStackTrace, stackTraceLimit, etc.)
+            PatchedError.prototype = OriginalError.prototype;
+            try { Object.setPrototypeOf(PatchedError, OriginalError); } catch (_) {}
+            try {
+                for (const key of Object.getOwnPropertyNames(OriginalError)) {
+                    if (key === 'length' || key === 'name' || key === 'prototype') continue;
+                    try {
+                        Object.defineProperty(PatchedError, key, Object.getOwnPropertyDescriptor(OriginalError, key));
+                    } catch (_) {}
+                }
+            } catch (_) {}
+
             //eslint-disable-next-line no-global-assign
-            Error = function (message) {
-                const error = new originalError(message);
-                const originalStack = error.stack;
-                if (error.stack.includes('moduleRaid')) error.stack = originalStack + '\n    at https://web.whatsapp.com/vendors~lazy_loaded_low_priority_components.05e98054dbd60f980427.js:2:44';
-                return error;
-            };
+            Error = PatchedError;
         });
         
         await page.goto(WhatsWebURL, {
@@ -376,14 +395,36 @@ class Client extends EventEmitter {
         await this.inject();
 
         this.pupPage.on('framenavigated', async (frame) => {
-            if(frame.url().includes('post_logout=1') || this.lastLoggedOut) {
-                this.emit(Events.DISCONNECTED, 'LOGOUT');
-                await this.authStrategy.logout();
-                await this.authStrategy.beforeBrowserInitialized();
-                await this.authStrategy.afterBrowserInitialized();
-                this.lastLoggedOut = false;
+            try {
+                // Only react to top-level navigations; SPA in-page route changes can happen
+                // when opening drawers (e.g. chat/group info) and reinjecting there can break UI.
+                if (frame !== this.pupPage.mainFrame()) return;
+
+                const url = frame.url() || '';
+
+                if(url.includes('post_logout=1') || this.lastLoggedOut) {
+                    this.emit(Events.DISCONNECTED, 'LOGOUT');
+                    await this.authStrategy.logout();
+                    await this.authStrategy.beforeBrowserInitialized();
+                    await this.authStrategy.afterBrowserInitialized();
+                    this.lastLoggedOut = false;
+                }
+
+                // Only reinject when the page context is actually missing what we need
+                // (e.g. full reload/crash), not on normal in-app navigation.
+                if (!url.startsWith(WhatsWebURL)) return;
+
+                const needsInject = await this.pupPage.evaluate(() => {
+                    return !window.Debug?.VERSION || !window.Store || !window.WWebJS;
+                }).catch(() => true);
+
+                if (needsInject) {
+                    await this.inject();
+                }
+            } catch (_) {
+                // Best-effort fallback: don't crash the client on navigation edge cases
+                try { await this.inject(); } catch (_) {}
             }
-            await this.inject();
         });
     }
 
